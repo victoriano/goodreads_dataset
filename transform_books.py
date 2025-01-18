@@ -124,9 +124,27 @@ def add_genres(df: pd.DataFrame, genres_map: Dict[str, List[str]]) -> pd.DataFra
     print("Adding genres to books...")
     
     def get_genres(book_id):
-        return genres_map.get(str(book_id), [])
+        genres = genres_map.get(str(book_id), [])
+        # Split any genres that contain commas and flatten the list
+        split_genres = []
+        for genre in genres:
+            # Split on comma and strip whitespace
+            split_genres.extend([g.strip() for g in genre.split(',')])
+        # Remove duplicates while maintaining order
+        seen = set()
+        unique_genres = [x for x in split_genres if not (x in seen or seen.add(x))]
+        return unique_genres
     
     df['genres'] = df['book_id'].apply(get_genres)
+    
+    # Print some statistics about genres
+    total_books = len(df)
+    books_with_genres = df['genres'].apply(len).gt(0).sum()
+    print(f"\nGenres Statistics:")
+    print(f"Total books: {total_books:,}")
+    print(f"Books with genres: {books_with_genres:,}")
+    print(f"Success rate: {(books_with_genres / total_books * 100):.2f}%")
+    
     return df
 
 def load_books_mapping(books_file: str = "goodreads_books.parquet") -> Dict[str, str]:
