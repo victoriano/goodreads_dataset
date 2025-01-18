@@ -129,16 +129,87 @@ def add_genres(df: pd.DataFrame, genres_map: Dict[str, List[str]]) -> pd.DataFra
     df['genres'] = df['book_id'].apply(get_genres)
     return df
 
+def load_books_mapping(books_file: str = "goodreads_books.parquet") -> Dict[str, str]:
+    """
+    Load books data and create a mapping from book_id to book title
+    """
+    print(f"Loading books from {books_file}...")
+    df = pd.read_parquet(books_file)
+    books_map = df.set_index('book_id')['title'].to_dict()
+    print(f"Loaded {len(books_map):,} book titles")
+    return books_map
+
+def parse_similar_book_ids(similar_str):
+    """Convert similar books string/array format to a list of string IDs"""
+    try:
+        # Handle numpy arrays first
+        if isinstance(similar_str, np.ndarray):
+            return [str(x) for x in similar_str.tolist()]  # Convert directly to list
+        
+        # Then check for NA values (now safe to do so)
+        if pd.isna(similar_str):
+            return []
+        
+        # Handle string representation
+        if isinstance(similar_str, str):
+            import ast
+            try:
+                # Safely evaluate the string as a literal (e.g., "[1, 2]")
+                return [str(x) for x in ast.literal_eval(similar_str)]
+            except:
+                # If that fails, try manual parsing
+                cleaned = similar_str.strip('[]').strip()
+                if not cleaned:
+                    return []
+                return [x.strip().strip('"\'') for x in cleaned.split(',')]
+        
+        # Handle plain Python lists
+        if isinstance(similar_str, list):
+            return [str(x) for x in similar_str]
+        
+        # Fallback
+        return []
+    except Exception as e:
+        print(f"Error parsing similar books string '{similar_str}' of type {type(similar_str)}: {e}")
+        return []
+
+def add_similar_book_titles(df: pd.DataFrame, books_map: Dict[str, str]) -> pd.DataFrame:
+    """Convert similar book IDs to book titles"""
+    print("Converting similar book IDs to titles...")
+    
+    if 'similar_books' in df.columns:
+        # Parse similar book IDs
+        df['similar_books'] = df['similar_books'].apply(parse_similar_book_ids)
+        
+        # Map to book titles
+        df['similar_book_titles'] = df['similar_books'].apply(
+            lambda ids: [books_map.get(bid, "Unknown") for bid in ids if bid in books_map]
+        )
+        
+        # Verify mapping success
+        empty_similar = df['similar_book_titles'].apply(lambda x: len(x) == 0).sum()
+        print(f"\nSimilar Books Statistics:")
+        print(f"Total records: {len(df)}")
+        print(f"Records with no similar books: {empty_similar}")
+        print(f"Success rate: {((len(df) - empty_similar) / len(df) * 100):.2f}%")
+    else:
+        print("Warning: 'similar_books' column not found in the dataset")
+        df['similar_book_titles'] = [[]]
+    
+    return df
+
 def transform_books(
     input_file: str = "filtered_books.parquet",
     output_file: str = "transformed_books.parquet",
     authors_file: str = "goodreads_book_authors.json",
     genres_file: str = "goodreads_book_genres_initial.json",
+    books_file: str = "goodreads_books.parquet",
     add_authors: bool = True,
-    add_genre: bool = True
+    add_genre: bool = True,
+    add_similar: bool = True
 ) -> None:
     """
-    Transform books data by adding author names and genres
+    Transform books data by adding author names, genres, and similar book titles
     """
     print(f"Reading books from {input_file}...")
     df = pd.read_parquet(input_file)
@@ -151,6 +222,10 @@ def transform_books(
     if add_genre:
         genres_map = load_genres_mapping(genres_file)
         df = add_genres(df, genres_map)
+    
+    if add_similar:
+        books_map = load_books_mapping(books_file)
+        df = add_similar_book_titles(df, books_map)
     
     # Print summary of transformations
     print("\nTransformations summary:")
@@ -171,6 +246,8 @@ def transform_books(
             print(f"Authors: {', '.join(book['author_names'])}")
         if 'genres' in book:
             print(f"Genres: {', '.join(book['genres'])}")
+        if 'similar_book_titles' in book:
+            print(f"Similar Books: {', '.join(book['similar_book_titles'][:5])}")  # Show first 5 similar books
 
 def main():
     parser = argparse.ArgumentParser(description='Transform Goodreads books data with additional information')
@@ -187,11 +264,17 @@ def main():
     parser.add_argument('--genres-file', type=str, default='goodreads_book_genres_initial.json',
                       help='Genres JSON file path (default: goodreads_book_genres_initial.json)')
     
+    parser.add_argument('--books-file', type=str, default='goodreads_books.parquet',
+                      help='Books parquet file path (default: goodreads_books.parquet)')
+    
     parser.add_argument('--skip-authors', action='store_true',
                       help='Skip adding author names')
     
     parser.add_argument('--skip-genres', action='store_true',
                       help='Skip adding genres')
+    
+    parser.add_argument('--skip-similar', action='store_true',
+                      help='Skip adding similar book titles')
     
     args = parser.parse_args()
     
@@ -200,8 +283,10 @@ def main():
         output_file=args.output,
         authors_file=args.authors_file,
         genres_file=args.genres_file,
+        books_file=args.books_file,
         add_authors=not args.skip_authors,
-        add_genre=not args.skip_genres
+        add_genre=not args.skip_genres,
+        add_similar=not args.skip_similar
     )
 
 if __name__ == "__main__":
