@@ -32,8 +32,10 @@ def load_genres_mapping(genres_file: str = "goodreads_book_genres_initial.json")
             book_genres = json.loads(line)
             book_id = book_genres['book_id']
             # Filter genres with a certain confidence threshold
-            genres = [genre for genre, score in book_genres['genres'].items() 
-                     if float(score) > 0.3]  # Adjustable threshold
+            genres = [
+                genre for genre, score in book_genres['genres'].items()
+                if float(score) > 0.3  # Adjustable threshold
+            ]
             if genres:
                 genres_map[book_id] = genres
     
@@ -43,56 +45,63 @@ def load_genres_mapping(genres_file: str = "goodreads_book_genres_initial.json")
 def parse_author_ids(author_str):
     """Convert any author string/array format to a list of string IDs"""
     try:
-        # Handle null values
+        # Handle numpy arrays first
+        if isinstance(author_str, np.ndarray):
+            return author_str.tolist()  # Convert directly to list
+        
+        # Then check for NA values (now safe to do so)
         if pd.isna(author_str):
             return []
-            
-        # Handle numpy arrays - convert directly to list of strings
-        if isinstance(author_str, np.ndarray):
-            return [str(x).strip().strip('"\'') for x in author_str]
-            
-        # Handle lists - convert elements to strings
-        if isinstance(author_str, list):
-            return [str(x).strip().strip('"\'') for x in author_str]
-            
-        # Handle string representation of lists
+        
+        # Handle string representation
         if isinstance(author_str, str):
-            # Remove brackets and split
-            cleaned = author_str.strip('[]').strip()
-            if not cleaned:
-                return []
-            # Split by comma and clean each ID
-            return [x.strip().strip('"\'') for x in cleaned.split(',')]
-            
+            import ast
+            try:
+                # Safely evaluate the string as a literal (e.g., "[1, 2]")
+                return ast.literal_eval(author_str)
+            except:
+                # If that fails, try manual parsing
+                cleaned = author_str.strip('[]').strip()
+                if not cleaned:
+                    return []
+                return [x.strip().strip('"\'') for x in cleaned.split(',')]
+        
+        # Handle plain Python lists
+        if isinstance(author_str, list):
+            return author_str
+        
+        # Fallback
         return []
     except Exception as e:
         print(f"Error parsing author string '{author_str}' of type {type(author_str)}: {e}")
         return []
 
-def map_authors(author_ids, authors_map):
+def map_authors(author_ids: List[str], authors_map: Dict[str, str]) -> List[str]:
+    """Map author IDs to their names"""
     try:
         if not author_ids:
             return []
-        return [authors_map.get(str(aid)) for aid in author_ids if aid and str(aid) in authors_map]
+        
+        # Convert all IDs to strings and look up in map
+        return [authors_map[str(aid)] for aid in author_ids if str(aid) in authors_map]
     except Exception as e:
         print(f"Error mapping authors {author_ids}: {e}")
         return []
 
 def add_author_names(df: pd.DataFrame, authors_map: Dict[str, str]) -> pd.DataFrame:
-    """
-    Convert author IDs to author names
-    """
+    """Convert author IDs to author names"""
     print("Converting author IDs to names...")
     
-    # Convert authors to list of IDs and then to names
     if 'authors' in df.columns:
         print("\nDebug: First few raw author entries and their types:")
         for entry in df['authors'].head():
             print(f"Value: {entry}, Type: {type(entry)}")
-            
+        
+        # Parse author IDs
         df['authors'] = df['authors'].apply(parse_author_ids)
         print("\nDebug: First few parsed author IDs:", df['authors'].head().tolist())
         
+        # Map to author names
         df['author_names'] = df['authors'].apply(lambda ids: map_authors(ids, authors_map))
         print("\nDebug: First few mapped author names:", df['author_names'].head().tolist())
         
