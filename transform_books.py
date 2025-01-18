@@ -198,6 +198,72 @@ def add_similar_book_titles(df: pd.DataFrame, books_map: Dict[str, str]) -> pd.D
     
     return df
 
+def add_publication_date(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Create a publication_date field in dd/mm/yyyy format using day, month and publication_year
+    """
+    print("Creating publication date field...")
+    
+    def format_date(row):
+        try:
+            # Default to 1 if day or month is missing
+            day = 1 if pd.isna(row['publication_day']) else int(row['publication_day'])
+            month = 1 if pd.isna(row['publication_month']) else int(row['publication_month'])
+            year = int(row['publication_year']) if not pd.isna(row['publication_year']) else None
+            
+            # Return None if year is missing
+            if year is None:
+                return None
+            
+            # Validate day and month values
+            day = min(max(1, day), 31)  # Keep day between 1 and 31
+            month = min(max(1, month), 12)  # Keep month between 1 and 12
+            
+            return f"{day:02d}/{month:02d}/{year}"
+        except (ValueError, TypeError):
+            return None
+    
+    df['publication_date'] = df.apply(format_date, axis=1)
+    
+    # Print some statistics
+    total_dates = len(df)
+    valid_dates = df['publication_date'].notna().sum()
+    print(f"Created {valid_dates:,} valid dates out of {total_dates:,} records")
+    print(f"Success rate: {(valid_dates / total_dates * 100):.2f}%")
+    
+    return df
+
+def select_and_reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Select and reorder columns in the specified order.
+    Missing columns will be filled with None/empty values.
+    Then sort by ratings_count in descending order.
+    """
+    desired_columns = [
+        'title', 'description', 'author_names', 'genres', 'similar_book_titles',
+        'publication_date', 'publication_year', 'url', 'num_pages', 'ratings_count', 'average_rating',
+        'text_reviews_count', 'publisher', 'language_code', 'country_code',
+        'format', 'publication_month', 'publication_day', 'is_ebook',
+        'edition_information', 'image_url', 'isbn', 'kindle_asin', 'book_id'
+    ]
+    
+    # Create missing columns with appropriate empty values
+    for col in desired_columns:
+        if col not in df.columns:
+            if col in ['author_names', 'genres', 'similar_book_titles']:
+                df[col] = [[]]  # Empty list for list columns
+            else:
+                df[col] = None  # None for scalar columns
+    
+    # Select and reorder columns
+    df = df[desired_columns]
+    
+    # Sort by ratings_count in descending order
+    print("Sorting books by ratings count...")
+    df = df.sort_values('ratings_count', ascending=False)
+    
+    return df
+
 def transform_books(
     input_file: str = "filtered_books.parquet",
     output_file: str = "transformed_books.parquet",
@@ -227,11 +293,18 @@ def transform_books(
         books_map = load_books_mapping(books_file)
         df = add_similar_book_titles(df, books_map)
     
+    # Add publication date
+    df = add_publication_date(df)
+    
     # Print summary of transformations
     print("\nTransformations summary:")
     new_columns = set(df.columns) - initial_columns
     if new_columns:
         print("Added columns:", ", ".join(new_columns))
+    
+    # Select and reorder columns
+    print("\nSelecting and reordering columns...")
+    df = select_and_reorder_columns(df)
     
     # Save transformed dataset
     df.to_parquet(output_file)
@@ -242,12 +315,14 @@ def transform_books(
     sample = df.sample(min(5, len(df)))
     for _, book in sample.iterrows():
         print(f"\nTitle: {book['title']}")
-        if 'author_names' in book:
+        if book['author_names'] and len(book['author_names']) > 0:
             print(f"Authors: {', '.join(book['author_names'])}")
-        if 'genres' in book:
+        if book['genres'] and len(book['genres']) > 0:
             print(f"Genres: {', '.join(book['genres'])}")
-        if 'similar_book_titles' in book:
+        if book['similar_book_titles'] and len(book['similar_book_titles']) > 0:
             print(f"Similar Books: {', '.join(book['similar_book_titles'][:5])}")  # Show first 5 similar books
+        if book['publication_date']:
+            print(f"Publication Date: {book['publication_date']}")
 
 def main():
     parser = argparse.ArgumentParser(description='Transform Goodreads books data with additional information')
