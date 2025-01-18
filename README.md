@@ -36,29 +36,59 @@ This tool can download and process these dataset files:
 ## Usage
 
 1. Install dependencies:
-bash
+```bash
 uv pip install -r requirements.txt
-
-
+```
 
 2. Run the pipeline using one of these options:
 
-- Download specific dataset (choices: books, authors, genres, all):
-bash
+Download specific dataset (choices: books, authors, genres, all):
+  
+```bash
 uv run main.py --step download --dataset books
 uv run main.py --step download --dataset authors
 uv run main.py --step download --dataset genres
 uv run main.py --step download --dataset all
+```
 
 - Convert to Parquet only (requires JSON file to be present):
-bash
+```bash
 uv run main.py --step convert --dataset books
+```
 
 
 - Run complete pipeline (download and convert):
-bash
+```bash
 uv run main.py --step all --dataset books
+```
 
+## Filtering Books
+
+After converting to Parquet format, you can filter the books based on various criteria using the `filter_books.py` script:
+
+### Basic Usage
+
+Filter books with at least 1000 reviews (default):
+```bash
+uv run filter_books.py
+```
+
+### Advanced Usage
+
+Customize the filtering with various options:
+```bash
+uv run filter_books.py --min-reviews 5000
+```
+
+```bash
+uv run filter_books.py --min-reviews 1000 --min-avg-rating 4.0
+```
+
+Transform filtered books
+```bash
+uv run transform_books.py
+uv run transform_books.py --input filtered_books.parquet --output enriched_books.parquet
+```
 
 ## Output Files
 
