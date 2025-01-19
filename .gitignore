@@ -6,6 +6,9 @@
 *.csv
 *.parquet
 
+# But include our curated shelf classifications
+!classified_shelves_10K.parquet
+
 # Python
 __pycache__/
 *.py[cod]
