@@ -2,6 +2,29 @@
 
 This project provides tools to download and convert the Goodreads Books Dataset from the [UCSD Book Graph](https://mengtingwan.github.io/data/goodreads.html#datasets) into Parquet format for efficient data analysis.
 
+You can check the final result in [Graphext](https://graphext.com) and play with the data (if you have a free Graphext account) [here](https://app.graphext.com/projects/UHJvamVjdC0xMDg3MTY=/v/data
+) or [here](https://public.graphext.com/ea0a53d84f0facda/index.html) if don't have an account. 
+
+![Goodreads Top 80K Books Visualization](goodreads_on_graphext.jpg)
+
+The visualization above shows the relationships between the top 80,000 most reviewed books on Goodreads. Each cluster represents books with similar characteristics based on their multiple genres. Notable clusters include fantasy series like "The Lord of the Rings", classic literature like "Pride and Prejudice", and modern bestsellers like "The Hunger Games".
+
+## Basic Usage
+
+#Download needed assets from the web
+main.py --step download --dataset all
+* goodreads_books.json (~8GB when decompressed)
+* goodreads_book_authors.json
+
+#Create custom genres index
+analyze_shelves.py --input goodreads_books.parquet --output classified_shelves.parquet --top-n 1000 --classify --openai-api-key "your-api-key"
+
+#Filter original dataset down to only top books more reviews
+filter_books.py --min-reviews 1000
+
+#Transform filtered books to map authors, genres, similar books, format publication date and select and reorder columns, 
+transform_books.py --input filtered_books.parquet --output enriched_books.parquet
+
 ## Dataset Information
 
 The complete dataset contains:
@@ -26,7 +49,7 @@ This tool can download and process these dataset files:
   - polars
 
 
-## Usage
+## Advanced Usage
 
 1. Install dependencies:
 ```bash
@@ -116,19 +139,6 @@ The converter makes these modifications to the original JSON structure:
 - `popular_shelves`: Converted from array of objects to array of shelf names
 - `authors`: Converted from array of objects to array of author IDs
 - All other fields are preserved as is
-
-## Citation
-
-If you use this dataset, please cite the original authors:
-
-@inproceedings{
-Wan2018,
-author = {Mengting Wan and Julian McAuley},
-title = {Item Recommendation on Monotonic Behavior Chains},
-booktitle = {RecSys},
-year = {2018}
-}
-
 
 ## License
 
