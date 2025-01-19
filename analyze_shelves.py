@@ -8,17 +8,20 @@ from tqdm import tqdm
 import json
 from pydantic import BaseModel
 import time
+import asyncio
+from typing import List
+import aiohttp
 
 class ShelfClassification(BaseModel):
     category: Literal["genre", "reading_status", "year_list", "other"]
     confidence: float
 
-def get_shelf_category(shelf_name: str, client: openai.OpenAI) -> ShelfClassification:
+async def get_shelf_category(shelf_name: str, client: openai.AsyncOpenAI) -> ShelfClassification:
     """
     Use OpenAI to classify a shelf name into one of three categories with confidence score
     """
     try:
-        completion = client.beta.chat.completions.parse(
+        completion = await client.beta.chat.completions.parse(
             model="gpt-4o-mini",
             messages=[
                 {
@@ -45,21 +48,35 @@ Provide your classification with a confidence score between 0 and 1."""
         print(f"Error classifying shelf '{shelf_name}': {e}")
         return ShelfClassification(category="other", confidence=0.0)
 
-def analyze_shelves(
+async def classify_shelves_batch(shelves: List[dict], client: openai.AsyncOpenAI) -> List[dict]:
+    """
+    Classify a batch of shelves concurrently
+    """
+    tasks = []
+    for shelf in shelves:
+        task = get_shelf_category(shelf["popular_shelves"], client)
+        tasks.append(task)
+    
+    results = await asyncio.gather(*tasks)
+    
+    classifications = []
+    for shelf, result in zip(shelves, results):
+        classifications.append({
+            "shelf_name": shelf["popular_shelves"],
+            "count": shelf["count"],
+            "category": result.category,
+            "confidence": result.confidence
+        })
+    
+    return classifications
+
+async def analyze_shelves_async(
     input_file: str = "goodreads_books.parquet",
     output_file: str = "popular_shelves.parquet",
     top_n: int = 1000,
-    openai_api_key: str = None
+    openai_api_key: str = None,
+    batch_size: int = 1000  # Increased default to 1000
 ) -> None:
-    """
-    Analyze popular shelves from Goodreads books dataset
-    
-    Args:
-        input_file: Path to input parquet file with books data
-        output_file: Path to output parquet file for shelf analysis
-        top_n: Number of top shelves to analyze (default: 1000)
-        openai_api_key: OpenAI API key for classification
-    """
     start_time = time.time()
     print(f"Reading parquet file: {input_file}")
     
@@ -89,19 +106,19 @@ def analyze_shelves(
     if not openai_api_key:
         raise ValueError("OpenAI API key must be provided or set in OPENAI_API_KEY environment variable")
     
-    client = openai.OpenAI(api_key=openai_api_key)
+    client = openai.AsyncOpenAI(api_key=openai_api_key)
     
-    # Classify each shelf
+    # Process shelves in batches
     classifications = []
-    for shelf in tqdm(shelf_counts.iter_rows(named=True), total=len(shelf_counts)):
-        shelf_name = shelf["popular_shelves"]
-        result = get_shelf_category(shelf_name, client)
-        classifications.append({
-            "shelf_name": shelf_name,
-            "count": shelf["count"],
-            "category": result.category,
-            "confidence": result.confidence
-        })
+    shelves = shelf_counts.iter_rows(named=True)
+    shelf_batches = list(shelves)
+    
+    with tqdm(total=len(shelf_batches)) as pbar:
+        for i in range(0, len(shelf_batches), batch_size):
+            batch = shelf_batches[i:i + batch_size]
+            batch_results = await classify_shelves_batch(batch, client)
+            classifications.extend(batch_results)
+            pbar.update(len(batch))
     
     # Convert to Polars DataFrame and save
     results_df = pl.DataFrame(classifications)
@@ -115,7 +132,8 @@ def analyze_shelves(
     print(f"Aggregation time: {aggregation_time:.2f} seconds")
     print(f"Classification time: {classification_time:.2f} seconds")
     print(f"Total time: {total_time:.2f} seconds")
-    print(f"Average time per shelf classification: {classification_time/len(shelf_counts):.2f} seconds")
+    print(f"Average time per shelf: {classification_time/len(shelf_counts):.2f} seconds")
+    print(f"Average shelves per second: {len(shelf_counts)/classification_time:.1f}")
     
     print("\nClassification Summary:")
     summary = (
@@ -147,6 +165,22 @@ def analyze_shelves(
         print(f"\n{category}:")
         for row in top_shelves.iter_rows(named=True):
             print(f"  - {row['shelf_name']}: {row['count']:,} occurrences (confidence: {row['confidence']:.2f})")
+
+def analyze_shelves(
+    input_file: str = "goodreads_books.parquet",
+    output_file: str = "popular_shelves.parquet",
+    top_n: int = 1000,
+    openai_api_key: str = None,
+    batch_size: int = 1000
+) -> None:
+    """Wrapper function to run async analysis"""
+    asyncio.run(analyze_shelves_async(
+        input_file=input_file,
+        output_file=output_file,
+        top_n=top_n,
+        openai_api_key=openai_api_key,
+        batch_size=batch_size
+    ))
 
 def aggregate_shelves(
     input_file: str = "goodreads_books.parquet",
@@ -215,6 +249,9 @@ def main():
     parser.add_argument('--openai-api-key', type=str,
                       help='OpenAI API key (required only with --classify)')
     
+    parser.add_argument('--batch-size', type=int, default=1000,
+                      help='Number of shelves to process in parallel (default: 1000). With tier 5 access, this can go up to 30000.')
+    
     args = parser.parse_args()
     
     if args.classify:
@@ -222,7 +259,8 @@ def main():
             input_file=args.input,
             output_file=args.output,
             top_n=args.top_n,
-            openai_api_key=args.openai_api_key
+            openai_api_key=args.openai_api_key,
+            batch_size=args.batch_size
         )
     else:
         aggregate_shelves(
