@@ -2,4 +2,6 @@ requests
 tqdm
 pandas
 pyarrow
-ijson 
+ijson
+polars
+openai>=1.0.0 

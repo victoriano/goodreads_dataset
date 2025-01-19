@@ -23,14 +23,7 @@ This tool can download and process these dataset files:
   - pandas
   - pyarrow
   - ijson
-
-## Project Structure
-
-.
-├── main.py # Main orchestration script
-├── download_books.py # Handles downloading and decompressing the datasets
-├── json_to_parquet.py # Converts JSON to Parquet format
-└── requirements.txt # Python dependencies
+  - polars
 
 
 ## Usage
@@ -73,8 +66,6 @@ Filter books with at least 1000 reviews (default):
 uv run filter_books.py
 ```
 
-### Advanced Usage
-
 Customize the filtering with various options:
 ```bash
 uv run filter_books.py --min-reviews 5000
@@ -82,6 +73,15 @@ uv run filter_books.py --min-reviews 5000
 
 ```bash
 uv run filter_books.py --min-reviews 1000 --min-avg-rating 4.0
+```
+Create Index of Shelves
+```bash
+uv run analyze_shelves.py --input goodreads_books.parquet --output popular_shelves.parquet --top-n 1000
+```
+
+Classify shelves into "genre", "reading_status", "year_list", "other"
+```bash
+uv run analyze_shelves.py --input goodreads_books.parquet --output classified_shelves.parquet --top-n 1000 --classify --openai-api-key "your-api-key"
 ```
 
 Transform filtered books
