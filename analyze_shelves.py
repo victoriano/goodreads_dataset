@@ -13,12 +13,12 @@ from typing import List
 import aiohttp
 
 class ShelfClassification(BaseModel):
-    category: Literal["genre", "reading_status", "year_list", "other"]
+    category: Literal["genre", "topic", "reading_status", "year_list", "book_format", "other"]
     confidence: float
 
 async def get_shelf_category(shelf_name: str, client: openai.AsyncOpenAI) -> ShelfClassification:
     """
-    Use OpenAI to classify a shelf name into one of three categories with confidence score
+    Use OpenAI to classify a shelf name into categories with confidence score
     """
     try:
         completion = await client.beta.chat.completions.parse(
@@ -27,16 +27,35 @@ async def get_shelf_category(shelf_name: str, client: openai.AsyncOpenAI) -> She
                 {
                     "role": "system",
                     "content": """You are an expert at classifying Goodreads shelf names into categories.
-You will be given a shelf name and should classify it into exactly one category with a confidence score."""
+You will be given a shelf name and should classify it into exactly one category with a confidence score.
+Pay special attention to distinguish between:
+- Genres: established categories of literature
+- Topics: specific subjects or areas of interest
+- Book Formats: physical format or medium of the book"""
                 },
                 {
                     "role": "user",
                     "content": f"""Classify this Goodreads shelf name: '{shelf_name}'
 It must be classified as exactly ONE of these categories:
-1. genre - if it represents a book genre (e.g., 'fantasy', 'mystery', 'romance')
-2. reading_status - if it represents reading status (e.g., 'to-read', 'currently-reading', 'read')
-3. year_list - if it represents a year-based list (e.g., '2024-books', 'read-in-2023')
-4. other - anything else
+1. genre - if it represents an established category of literature (e.g., 'fantasy', 'mystery', 'romance', 'historical-fiction')
+2. topic - if it represents a specific subject matter or area of interest (e.g., 'psychology', 'world-war-2', 'neuroscience', 'buddhism', 'climate-change')
+3. reading_status - if it represents reading status (e.g., 'to-read', 'currently-reading', 'read')
+4. year_list - if it represents a year-based list (e.g., '2024-books', 'read-in-2023')
+5. book_format - if it represents the format or medium of the book (e.g., 'ebook', 'audiobook', 'hardcover', 'paperback', 'kindle', 'graphic-novel')
+6. other - anything else that doesn't fit the above categories
+
+Examples of classifications:
+- 'civil-war' = topic (specific historical event)
+- 'historical-fiction' = genre (type of literature)
+- 'psychology' = topic (field of study)
+- 'self-help' = genre (category of books)
+- 'space' = topic (subject matter)
+- 'science-fiction' = genre (type of literature)
+- 'kindle-unlimited' = book_format (reading platform)
+- 'audiobook' = book_format (listening format)
+- 'manga' = book_format (comic format from Japan)
+- 'hardback' = book_format (physical format)
+- 'ebook' = book_format (digital format)
 
 Provide your classification with a confidence score between 0 and 1."""
                 }
@@ -155,7 +174,7 @@ async def analyze_shelves_async(
     
     # Print sample of most common shelves by category
     print("\nTop 5 shelves by category:")
-    for category in ["genre", "reading_status", "year_list"]:
+    for category in ["genre", "topic", "reading_status", "year_list", "book_format"]:
         top_shelves = (
             results_df
             .filter(pl.col("category") == category)
