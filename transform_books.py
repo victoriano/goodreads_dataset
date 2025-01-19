@@ -20,26 +20,150 @@ def load_authors_mapping(authors_file: str = "goodreads_book_authors.json") -> D
     print(f"Loaded {len(authors_map):,} authors")
     return authors_map
 
-def load_genres_mapping(genres_file: str = "goodreads_book_genres_initial.json") -> Dict[str, List[str]]:
+def load_genres_mapping(classified_shelves_file: str = "classified_shelves_10K.parquet", 
+                        input_df: pd.DataFrame = None) -> Dict[str, Dict[str, Any]]:
     """
-    Load genres data and create a mapping from book_id to list of genres
+    Load classified_shelves_10K.parquet as a dictionary to classify the original popular_shelves
+    from the input DataFrame into curated categories.
+
+    Returns a dictionary mapping book_id (as string) to a dictionary containing:
+    - curated_shelves: list of shelf names that are either "genre" or "topic"
+    - shelf_categories: list of the shelf's high-level categories ("genre", "topic", etc.)
+    - detail_categories: list of the shelf's detailed categories
+    - is_fiction_ratio: percentage of shelves classified as fiction (0 <= ratio <= 1)
     """
-    print(f"Loading genres from {genres_file}...")
+    print(f"Loading classified shelves from {classified_shelves_file}...")
+    try:
+        shelves_df = pd.read_parquet(classified_shelves_file)
+    except Exception as e:
+        print(f"Error reading classified_shelves_file ({classified_shelves_file}): {e}")
+        return {}
+
+    print(f"classified_shelves DataFrame shape: {shelves_df.shape}")
+    print("First few rows of shelves_df:")
+    print(shelves_df.head(5))
+
+    # Build a lookup for shelf classification details
+    shelf_classification = {}
+    loaded_count = 0
+    for _, row in shelves_df.iterrows():
+        shelf_name = row.get('shelf_name')
+        category = row.get('category')
+        if pd.isna(category) or not shelf_name:
+            continue
+
+        # Handle missing or NaN fields
+        detailed_category = row.get('detailed_category')
+        if pd.isna(detailed_category):
+            detailed_category = None
+        is_fiction = row.get('is_fiction')
+        if pd.isna(is_fiction):
+            is_fiction = None
+
+        shelf_classification[shelf_name] = {
+            'category': category,
+            'detailed_category': detailed_category,
+            'is_fiction': is_fiction
+        }
+        loaded_count += 1
+
+    print(f"Loaded classification details for {loaded_count:,} shelves")
+
+    def process_book_shelves(row: pd.Series) -> Dict[str, Any]:
+        if 'book_id' not in row:
+            print(f"Warning: 'book_id' missing in row: {row}")
+            return {}
+
+        book_id = str(row['book_id'])
+
+        # Retrieve the original popular_shelves from the row
+        try:
+            popular_shelves_data = row['popular_shelves']
+        except KeyError:
+            print(f"Warning: 'popular_shelves' missing for book_id={book_id}")
+            popular_shelves_data = []
+
+        # Convert popular_shelves into a usable Python list
+        if isinstance(popular_shelves_data, np.ndarray):
+            # Convert numpy array to list
+            popular_shelves = popular_shelves_data.tolist()
+        elif isinstance(popular_shelves_data, list):
+            # Already a list; just assign
+            popular_shelves = popular_shelves_data
+        elif isinstance(popular_shelves_data, str):
+            import ast
+            # Attempt to parse the string representation of a list
+            try:
+                popular_shelves = ast.literal_eval(popular_shelves_data)
+            except Exception as e:
+                print(f"Error parsing popular_shelves string for book_id={book_id}: {e}")
+                popular_shelves = []
+        else:
+            print(
+                f"Unexpected popular_shelves type for book_id={book_id}. "
+                f"Got: {type(popular_shelves_data)}"
+            )
+            popular_shelves = []
+
+        # Prepare classification data structure
+        book_data = {
+            'popular_shelves': popular_shelves,
+            'curated_shelves': [],
+            'shelf_categories': [],
+            'detail_categories': [],
+            'fiction_count': 0,
+            'total_classified': 0
+        }
+
+        # Classify each shelf
+        for shelf_name in popular_shelves:
+            shelf_info = shelf_classification.get(shelf_name)
+            if not shelf_info:
+                # Shelf not found in classification file
+                continue
+
+            # Include the shelf if it is a "genre" or "topic"
+            if shelf_info['category'] in ['genre', 'topic']:
+                if shelf_name not in book_data['curated_shelves']:
+                    book_data['curated_shelves'].append(shelf_name)
+                if shelf_info['category'] not in book_data['shelf_categories']:
+                    book_data['shelf_categories'].append(shelf_info['category'])
+                if (
+                    shelf_info['detailed_category'] 
+                    and shelf_info['detailed_category'] not in book_data['detail_categories']
+                ):
+                    book_data['detail_categories'].append(shelf_info['detailed_category'])
+
+            # Count fiction vs. non-fiction
+            if shelf_info['is_fiction'] is not None:
+                book_data['total_classified'] += 1
+                if shelf_info['is_fiction'] is True:
+                    book_data['fiction_count'] += 1
+
+        # Calculate the ratio of shelves classified as fiction
+        total = book_data['total_classified']
+        book_data['is_fiction_ratio'] = book_data['fiction_count'] / total if total else None
+
+        # Remove temporary fields
+        del book_data['fiction_count']
+        del book_data['total_classified']
+        return book_data
+
     genres_map = {}
-    
-    with open(genres_file, 'r') as f:
-        for line in f:
-            book_genres = json.loads(line)
-            book_id = book_genres['book_id']
-            # Filter genres with a certain confidence threshold
-            genres = [
-                genre for genre, score in book_genres['genres'].items()
-                if float(score) > 0.3  # Adjustable threshold
-            ]
-            if genres:
-                genres_map[book_id] = genres
-    
-    print(f"Loaded genres for {len(genres_map):,} books")
+    if input_df is not None:
+        print(f"\nProcessing input_df: {input_df.shape[0]:,} rows, columns: {list(input_df.columns)}")
+        print("\nSample of input_df (first 5 rows):")
+        print(input_df.head(5))
+
+        # Creating a map for each book
+        for _, row in input_df.iterrows():
+            classification_result = process_book_shelves(row)
+            if classification_result:
+                book_id_str = str(row['book_id'])
+                genres_map[book_id_str] = classification_result
+
+    print(f"\nCreated classification mapping for {len(genres_map):,} books "
+          f"out of {0 if input_df is None else len(input_df):,} total input records.")
     return genres_map
 
 def parse_author_ids(author_str):
@@ -117,33 +241,37 @@ def add_author_names(df: pd.DataFrame, authors_map: Dict[str, str]) -> pd.DataFr
     
     return df
 
-def add_genres(df: pd.DataFrame, genres_map: Dict[str, List[str]]) -> pd.DataFrame:
+def add_genres(df: pd.DataFrame, genres_map: Dict[str, Dict[str, Any]]) -> pd.DataFrame:
     """
-    Add genres to books
+    Add genre and shelf classification information to books
     """
-    print("Adding genres to books...")
+    print("Adding shelf classification to books...")
     
-    def get_genres(book_id):
-        genres = genres_map.get(str(book_id), [])
-        # Split any genres that contain commas and flatten the list
-        split_genres = []
-        for genre in genres:
-            # Split on comma and strip whitespace
-            split_genres.extend([g.strip() for g in genre.split(',')])
-        # Remove duplicates while maintaining order
-        seen = set()
-        unique_genres = [x for x in split_genres if not (x in seen or seen.add(x))]
-        return unique_genres
+    def get_book_classification(book_id):
+        book_data = genres_map.get(str(book_id), {
+            'popular_shelves': [],
+            'curated_shelves': [],
+            'shelf_categories': [],
+            'detail_categories': [],
+            'is_fiction_ratio': None
+        })
+        return book_data
     
-    df['genres'] = df['book_id'].apply(get_genres)
+    # Add new columns for each classification aspect
+    classifications = df['book_id'].apply(get_book_classification)
+    df['popular_shelves'] = classifications.apply(lambda x: x['popular_shelves'])
+    df['curated_shelves'] = classifications.apply(lambda x: x['curated_shelves'])
+    df['shelf_categories'] = classifications.apply(lambda x: x['shelf_categories'])
+    df['detail_categories'] = classifications.apply(lambda x: x['detail_categories'])
+    df['is_fiction_ratio'] = classifications.apply(lambda x: x['is_fiction_ratio'])
     
-    # Print some statistics about genres
+    # Print some statistics about the classification
     total_books = len(df)
-    books_with_genres = df['genres'].apply(len).gt(0).sum()
-    print(f"\nGenres Statistics:")
+    books_with_shelves = df['curated_shelves'].apply(len).gt(0).sum()
+    print(f"\nClassification Statistics:")
     print(f"Total books: {total_books:,}")
-    print(f"Books with genres: {books_with_genres:,}")
-    print(f"Success rate: {(books_with_genres / total_books * 100):.2f}%")
+    print(f"Books with classified shelves: {books_with_shelves:,}")
+    print(f"Success rate: {(books_with_shelves / total_books * 100):.2f}%")
     
     return df
 
@@ -258,7 +386,8 @@ def select_and_reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
     Then sort by ratings_count in descending order.
     """
     desired_columns = [
-        'title', 'description', 'author_names', 'genres', 'similar_book_titles',
+        'title', 'description', 'author_names', 'popular_shelves', 'curated_shelves', 'shelf_categories', 
+        'detail_categories', 'is_fiction_ratio', 'similar_book_titles',
         'publication_date', 'publication_year', 'url', 'num_pages', 'ratings_count', 'average_rating',
         'text_reviews_count', 'publisher', 'language_code', 'country_code',
         'format', 'publication_month', 'publication_day', 'is_ebook',
@@ -268,8 +397,10 @@ def select_and_reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
     # Create missing columns with appropriate empty values
     for col in desired_columns:
         if col not in df.columns:
-            if col in ['author_names', 'genres', 'similar_book_titles']:
+            if col in ['author_names', 'popular_shelves', 'curated_shelves', 'shelf_categories', 'detail_categories', 'similar_book_titles']:
                 df[col] = [[]]  # Empty list for list columns
+            elif col == 'is_fiction_ratio':
+                df[col] = None  # None for the ratio
             else:
                 df[col] = None  # None for scalar columns
     
@@ -286,7 +417,8 @@ def transform_books(
     input_file: str = "filtered_books.parquet",
     output_file: str = "transformed_books.parquet",
     authors_file: str = "goodreads_book_authors.json",
-    genres_file: str = "goodreads_book_genres_initial.json",
+    genres_file: str = "classified_shelves_10K.parquet",
+    book_shelves_file: str = "goodreads_book_shelves.json",
     books_file: str = "goodreads_books.parquet",
     add_authors: bool = True,
     add_genre: bool = True,
@@ -304,7 +436,7 @@ def transform_books(
         df = add_author_names(df, authors_map)
     
     if add_genre:
-        genres_map = load_genres_mapping(genres_file)
+        genres_map = load_genres_mapping(genres_file, df)
         df = add_genres(df, genres_map)
     
     if add_similar:
@@ -335,8 +467,16 @@ def transform_books(
         print(f"\nTitle: {book['title']}")
         if book['author_names'] and len(book['author_names']) > 0:
             print(f"Authors: {', '.join(book['author_names'])}")
-        if book['genres'] and len(book['genres']) > 0:
-            print(f"Genres: {', '.join(book['genres'])}")
+        if book['popular_shelves'] and len(book['popular_shelves']) > 0:
+            print(f"Popular Shelves: {', '.join(book['popular_shelves'][:5])}")  # Show first 5 shelves
+        if book['curated_shelves'] and len(book['curated_shelves']) > 0:
+            print(f"Curated Shelves: {', '.join(book['curated_shelves'])}")
+        if book['shelf_categories'] and len(book['shelf_categories']) > 0:
+            print(f"Categories: {', '.join(book['shelf_categories'])}")
+        if book['detail_categories'] and len(book['detail_categories']) > 0:
+            print(f"Detailed Categories: {', '.join(book['detail_categories'])}")
+        if book['is_fiction_ratio'] is not None:
+            print(f"Fiction Ratio: {book['is_fiction_ratio']:.2f}")
         if book['similar_book_titles'] and len(book['similar_book_titles']) > 0:
             print(f"Similar Books: {', '.join(book['similar_book_titles'][:5])}")  # Show first 5 similar books
         if book['publication_date']:
@@ -354,8 +494,11 @@ def main():
     parser.add_argument('--authors-file', type=str, default='goodreads_book_authors.json',
                       help='Authors JSON file path (default: goodreads_book_authors.json)')
     
-    parser.add_argument('--genres-file', type=str, default='goodreads_book_genres_initial.json',
-                      help='Genres JSON file path (default: goodreads_book_genres_initial.json)')
+    parser.add_argument('--genres-file', type=str, default='classified_shelves_10K.parquet',
+                      help='Classified shelves parquet file path (default: classified_shelves_10K.parquet)')
+    
+    parser.add_argument('--book-shelves-file', type=str, default='goodreads_book_shelves.json',
+                      help='Book shelves JSON file path (default: goodreads_book_shelves.json)')
     
     parser.add_argument('--books-file', type=str, default='goodreads_books.parquet',
                       help='Books parquet file path (default: goodreads_books.parquet)')
@@ -376,6 +519,7 @@ def main():
         output_file=args.output,
         authors_file=args.authors_file,
         genres_file=args.genres_file,
+        book_shelves_file=args.book_shelves_file,
         books_file=args.books_file,
         add_authors=not args.skip_authors,
         add_genre=not args.skip_genres,

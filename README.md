@@ -74,6 +74,7 @@ uv run filter_books.py --min-reviews 5000
 ```bash
 uv run filter_books.py --min-reviews 1000 --min-avg-rating 4.0
 ```
+
 Create Index of Shelves
 ```bash
 uv run analyze_shelves.py --input goodreads_books.parquet --output popular_shelves.parquet --top-n 1000
